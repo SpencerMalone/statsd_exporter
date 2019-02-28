@@ -14,6 +14,8 @@
 package main
 
 import (
+	"runtime"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -134,6 +136,19 @@ var (
 			Help: "The total number of metrics.",
 		},
 		[]string{"type"},
+	udpBufferQueued = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "statsd_exporter_udp_buffer_queued",
+			Help: "The number of queued UDP messages in the linux buffer.",
+		},
+		[]string{"protocol"},
+	)
+	udpBufferDropped = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "statsd_exporter_events_conflict_total",
+			Help: "The number of dropped UDP messages in the linux buffer",
+		},
+		[]string{"protocol"},
 	)
 )
 
@@ -157,4 +172,8 @@ func init() {
 	prometheus.MustRegister(errorEventStats)
 	prometheus.MustRegister(eventsActions)
 	prometheus.MustRegister(metricsCount)
+	if runtime.GOOS == "linux" {
+		prometheus.MustRegister(udpBufferQueued)
+		prometheus.MustRegister(udpBufferDropped)
+	}
 }

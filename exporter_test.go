@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
 	"testing"
 	"time"
@@ -841,6 +842,25 @@ func TestHashLabelNames(t *testing.T) {
 	}
 	if hash1.values == hash2.values {
 		t.Fatal("Hash of label names shouldn't match, but do")
+	}
+}
+
+func TestProcfsWatching(t *testing.T) {
+	filename := "/tmp/procfstest"
+
+	d1 := []byte("  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode ref pointer drops\n42429: 00000000000000000000000000000000:1FBD 00000000000000000000000000000000:0000 07 00000000:00000034 00:00000000 00000000     0        0 1233268343 2 ffff881fc5d32ec0 10000\n")
+	err := ioutil.WriteFile(filename, d1, 0644)
+	if err != nil {
+		t.Fatalf("Should be able to write a procfs-like file: %s", err)
+	}
+
+	queued, dropped := parseProcfsNetFile(filename)
+	if dropped != 10000 {
+		t.Fatal("Dropped should be 10000")
+	}
+
+	if queued != 34 {
+		t.Fatal("Queued should be 34")
 	}
 }
 
