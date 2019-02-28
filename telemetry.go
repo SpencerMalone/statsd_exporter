@@ -136,8 +136,9 @@ var (
 			Help: "The total number of metrics.",
 		},
 		[]string{"type"},
-	udpBufferQueued = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	)
+	udpBufferQueued = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Name: "statsd_exporter_udp_buffer_queued",
 			Help: "The number of queued UDP messages in the linux buffer.",
 		},
@@ -145,7 +146,7 @@ var (
 	)
 	udpBufferDropped = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "statsd_exporter_events_conflict_total",
+			Name: "statsd_exporter_udp_buffer_dropped",
 			Help: "The number of dropped UDP messages in the linux buffer",
 		},
 		[]string{"protocol"},

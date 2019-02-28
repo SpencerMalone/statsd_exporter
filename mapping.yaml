@@ -1,0 +1,247 @@
+defaults:
+  timer_type: summary
+mappings:
+    # Use this for mailchimp mappings!
+    
+    ## Controller+Action metrics. Memory, timing, etc.
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.http.request.(.*)controller.([^\._]*)[\._](.*)
+      match_type: regex
+      name: "mailchimp_http_request_$8"
+      timer_type: summary
+      labels:
+        # No reason to include instance, it's not representative of our user's experience
+        # If you want this data, please look at ES instead
+        # instance: "$5"
+        dc: "$1"
+        env: "$2"
+        controller: "$6"
+        action: "$7"
+        shard: "$4"
+    
+    ## This statsd data has the UID in the name, which is... not great. Wipe it out!
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.(mailchimp\.api\.batches\.pending_batches)\..*
+      match_type: regex
+      name: "$6"
+      timer_type: summary
+      labels:
+        dc: "$1"
+        env: "$2"
+        shard: "$4"
+    
+    ## Drop API 2.0 metrics. I just don't think it'll be used
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.http.request.api20.([^\._]*)[\._]([^\._]*)[\._](.*)
+      match_type: regex
+      name: "mailchimp_api20_$8"
+      action: drop
+      timer_type: summary
+      labels:
+        instance: "$5"
+        dc: "$1"
+        env: "$2"
+        controller: "$6"
+        action: "$7"
+        shard: "$4"
+    
+    ## queue wait timings by job
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.queue_wait_timing_by_job\.(.*)
+      match_type: regex
+      name: "mailchimp_queue_wait_timing_by_job"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 10, 20, 40, 50, 75, 100, 300, 1000, 5000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        mcjob: "$6"
+    
+    ## queue wait timings by queue
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.queue_wait_timing_by_queue\.(.*)
+      match_type: regex
+      name: "mailchimp_queue_wait_timing_by_queue"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 10, 20, 40, 50, 75, 100, 300, 1000, 5000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        jobqueue: "$6"
+    
+    ## Job run timings
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.job.run_timing.([^\.]*)(.*)
+      match_type: regex
+      name: "mailchimp_job_run_timing_seconds${7}"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 10, 20, 40, 50, 75, 100, 300, 1000, 5000, 10000, 20000, 30000, 50000, 100000, 500000 ]
+      labels:
+        # No reason to include instance, it's not representative of our user's experience
+        # If you want this data, please look at ES instead
+        # instance: "$5"
+        dc: "$1"
+        env: "$2"
+        mcjob: "$6"
+        shard: "$4"
+    
+    ## Job run success
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.job.run.(.*).success
+      match_type: regex
+      name: "mailchimp_job_run_success"
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        mcjob: "$6"
+        success: "$7"
+    
+    ## Job run error
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.job.run.(.*).error.(.*)
+      match_type: regex
+      name: "mailchimp_job_run_error"
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        mcjob: "$6"
+        reason: "$7"
+    
+    ## pidless jobs
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.mailchimp.jobs.pidless\.(.*)
+      match_type: regex
+      name: "mailchimp_pidless_jobs"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 10, 20, 40, 50, 75, 100, 300, 1000, 5000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        jobqueue: "$6"
+    
+    ## Global matching for mailchimp. Be careful tweaking this
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.(.*_com)\.(mailchimp\..*)
+      match_type: regex
+      name: "${6}"
+      timer_type: summary
+      labels:
+        instance: "$5"
+        dc: "$1"
+        env: "$2"
+        shard: "$4"
+    
+    # This file is for custom nginx subservices.
+    # For example, if you want to track an API and the normal webapp with different alerts, use this
+    
+    # This Jenkins API endpoint always takes 30 seconds (as it streams data), so it's ruining our timing SLIs and SLOs.
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(jenkins2_rsglab_com)\.(sse-gateway)\.(.*duration.*)
+      match_type: regex
+      # Throw it awayyy
+      name: "nginx_${8}_seconds"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 200, 1000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        subservice: "sse-gateway"
+    # Rundeck's API is slow, and throws off tracking the user's UI experience.
+    # We want to track rundeck's frontend, but not the API
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(rundeck_rsglab_com)\.(api)\.(.*duration.*)
+      match_type: regex
+      name: "nginx_${8}_seconds"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 200, 1000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        subservice: "api"
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(.*mailchimp_com)\.(campaigns)\.(.*duration.*)
+      match_type: regex
+      name: "nginx_${8}_seconds"
+      timer_type: histogram
+      buckets: [ 0.1, 1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 200, 1000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        subservice: "$7"
+    
+    # These mappings are the last things to happen, but case the widest net.
+    
+    ## Nginx Availability / Request Totals
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(.*_com)\.(.*)\.(.*xx)
+      match_type: regex
+      name: "nginx_request_total"
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        respcode: "$8"
+        subservice: "default" # $7 is the root endpoint
+        # if you want to make a subservice (for example, track the API and webapp different):
+        # create a new matching that captures a specific subset of the root endpoints
+        # change this variable to something new
+    
+    ## Nginx Timings
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(.*_com)\.(.*)\.(.*duration.*)
+      match_type: regex
+      name: "nginx_${8}_seconds"
+      timer_type: histogram
+      buckets: [ 0.1, 0.2, 1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 200, 1000 ]
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        subservice: "default" # $7 is the root endpoint
+        # if you want to make a subservice (for example, track the API and webapp different):
+        # create a new matching that captures a specific subset of the root endpoints
+        # change this variable to something new## Nginx catch all
+    - match: (.*)\.(.*)\.(.*)\.(.*)\.stats\.(.*)\.nginx\.(.*_com)\.(.*)\.(.*)
+      match_type: regex
+      name: "nginx_request_$8"
+      labels:
+    
+        dc: $1
+        env: $2
+        role: $3
+        subrole: $4
+        instance: "$5"
+        vhost: "$6"
+        subservice: "default" # $7 is the root endpoint
+        # if you want to make a subservice (for example, track the API and webapp different):
+        # create a new matching that captures a specific subset of the root endpoints
+        # change this variable to something new
+    
+    ## Drop everything not matching in prod environments
+    - match: .
+      match_type: regex
+      action: drop
+      name: "dropped"
