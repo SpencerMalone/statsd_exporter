@@ -18,7 +18,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/howeyc/fsnotify"
 	"github.com/prometheus/client_golang/prometheus"
@@ -135,6 +138,83 @@ func dumpFSM(mapper *mapper.MetricMapper, dumpFilename string) error {
 	return nil
 }
 
+func watchUDPBuffers(lastQueued int, lastDropped int, lastQueued6 int, lastDropped6 int) {
+	myPid := strconv.Itoa(os.Getpid())
+
+	queuedUDP, droppedUDP := parseProcfsNetFile("/proc/" + myPid + "/net/udp")
+	label := "udp"
+
+	diff := queuedUDP - lastQueued
+	if diff < 0 {
+		log.Info("Queue count went negative! Abandoning UDP buffer parsing")
+		return
+	}
+	udpBufferQueued.WithLabelValues(label).Inc()
+
+	diff = droppedUDP - lastDropped
+	if diff < 0 {
+		log.Info("Dropped count went negative! Abandoning UDP buffer parsing")
+		return
+	}
+	udpBufferDropped.WithLabelValues(label).Inc()
+
+	queuedUDP6, droppedUDP6 := parseProcfsNetFile("/proc/" + myPid + "/net/udp6")
+	label = "udp6"
+
+	diff = queuedUDP6 - lastQueued6
+	if diff < 0 {
+		log.Info("Queue count went negative! Abandoning UDP buffer parsing")
+		return
+	}
+	udpBufferQueued.WithLabelValues(label).Inc()
+
+	diff = droppedUDP6 - lastDropped6
+	if diff < 0 {
+		log.Info("Dropped count went negative! Abandoning UDP buffer parsing")
+		return
+	}
+	udpBufferDropped.WithLabelValues(label).Inc()
+
+	time.Sleep(10 * time.Second)
+	watchUDPDrops(queuedUDP, droppedUDP, queuedUDP6, droppedUDP6)
+}
+
+func parseProcfsNetFile(filename string) (int, int) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	queued := 0
+	dropped := 0
+	s := bufio.NewScanner(f)
+	for n := 0; s.Scan(); n++ {
+		// Skip the header lines.
+		if n < 1 {
+			continue
+		}
+
+		fields := strings.Fields(s.Text())
+
+		queuedLine, err := strconv.Atoi(strings.Split(fields[4], ":")[1])
+		queued = queued + queuedLine
+		if err != nil {
+			log.Info("Unable to parse queued UDP buffers:", err)
+			return 0, 0
+		}
+
+		droppedLine, err := strconv.Atoi(fields[12])
+		dropped = dropped + droppedLine
+		if err != nil {
+			log.Info("Unable to parse dropped UDP buffers:", err)
+			return 0, 0
+		}
+	}
+
+	return queued, dropped
+}
+
 func main() {
 	var (
 		listenAddress   = kingpin.Flag("web.listen-address", "The address on which to expose the web interface and generated Prometheus metrics.").Default(":9102").String()
@@ -193,6 +273,10 @@ func main() {
 
 		tl := &StatsDTCPListener{conn: tconn}
 		go tl.Listen(events)
+	}
+
+	if runtime.GOOS == "linux" {
+		watchUDPBuffers(0, 0, 0, 0)
 	}
 
 	mapper := &mapper.MetricMapper{MappingsCount: mappingsCount}
