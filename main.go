@@ -88,7 +88,7 @@ func tcpAddrFromString(addr string) *net.TCPAddr {
 	}
 }
 
-func watchConfig(fileName string, mapper *mapper.MetricMapper) {
+func watchConfig(fileName string, mapper *mapper.MetricMapper, useMetricCache bool) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
@@ -103,13 +103,18 @@ func watchConfig(fileName string, mapper *mapper.MetricMapper) {
 		select {
 		case ev := <-watcher.Event:
 			log.Infof("Config file changed (%s), attempting reload", ev)
-			err = mapper.InitFromFile(fileName)
+			reloaded, err := mapper.InitFromFile(fileName, useMetricCache)
 			if err != nil {
 				log.Errorln("Error reloading config:", err)
 				configLoads.WithLabelValues("failure").Inc()
 			} else {
-				log.Infoln("Config reloaded successfully")
-				configLoads.WithLabelValues("success").Inc()
+				if reloaded {
+					log.Infoln("Config reloaded successfully")
+					configLoads.WithLabelValues("success").Inc()
+				} else {
+					log.Infoln("Config reload skipped")
+					configLoads.WithLabelValues("skipped").Inc()
+				}
 			}
 			// Re-add the file watcher since it can get lost on some changes. E.g.
 			// saving a file with vim results in a RENAME-MODIFY-DELETE event
@@ -144,6 +149,8 @@ func main() {
 		mappingConfig   = kingpin.Flag("statsd.mapping-config", "Metric mapping configuration file name.").String()
 		readBuffer      = kingpin.Flag("statsd.read-buffer", "Size (in bytes) of the operating system's transmit read buffer associated with the UDP connection. Please make sure the kernel parameters net.core.rmem_max is set to a value greater than the value specified.").Int()
 		dumpFSMPath     = kingpin.Flag("debug.dump-fsm", "The path to dump internal FSM generated for glob matching as Dot file.").Default("").String()
+
+		useMetricCache = kingpin.Flag("statsd.enable-mapping-cache", "Should you use the metric mapping cache. Increases throughput at the cost of memory").Default("true").Bool()
 	)
 
 	log.AddFlags(kingpin.CommandLine)
@@ -197,7 +204,7 @@ func main() {
 
 	mapper := &mapper.MetricMapper{MappingsCount: mappingsCount}
 	if *mappingConfig != "" {
-		err := mapper.InitFromFile(*mappingConfig)
+		_, err := mapper.InitFromFile(*mappingConfig, *useMetricCache)
 		if err != nil {
 			log.Fatal("Error loading config:", err)
 		}
@@ -207,7 +214,7 @@ func main() {
 				log.Fatal("Error dumping FSM:", err)
 			}
 		}
-		go watchConfig(*mappingConfig, mapper)
+		go watchConfig(*mappingConfig, mapper, *useMetricCache)
 	}
 	exporter := NewExporter(mapper)
 	exporter.Listen(events)

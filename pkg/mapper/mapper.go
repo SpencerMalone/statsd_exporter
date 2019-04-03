@@ -14,6 +14,7 @@
 package mapper
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"regexp"
@@ -49,7 +50,10 @@ type MetricMapper struct {
 	FSM      *fsm.FSM
 	doFSM    bool
 	doRegex  bool
-	mutex    sync.Mutex
+	useCache bool
+	cache    *MetricMapperCache
+	mutex    sync.RWMutex
+	sha      string
 
 	MappingsCount prometheus.Gauge
 }
@@ -83,7 +87,7 @@ var defaultQuantiles = []metricObjective{
 	{Quantile: 0.99, Error: 0.001},
 }
 
-func (m *MetricMapper) InitFromYAMLString(fileContents string) error {
+func (m *MetricMapper) InitFromYAMLString(fileContents string, useCache bool) error {
 	var n MetricMapper
 
 	if err := yaml.Unmarshal([]byte(fileContents), &n); err != nil {
@@ -189,6 +193,8 @@ func (m *MetricMapper) InitFromYAMLString(fileContents string) error {
 
 	m.Defaults = n.Defaults
 	m.Mappings = n.Mappings
+	m.cache = NewMetricMapperCache()
+	m.useCache = useCache
 	if n.doFSM {
 		var mappings []string
 		for _, mapping := range n.Mappings {
@@ -206,19 +212,39 @@ func (m *MetricMapper) InitFromYAMLString(fileContents string) error {
 	if m.MappingsCount != nil {
 		m.MappingsCount.Set(float64(len(n.Mappings)))
 	}
-
 	return nil
 }
 
-func (m *MetricMapper) InitFromFile(fileName string) error {
+func (m *MetricMapper) InitFromFile(fileName string, useCache bool) (bool, error) {
 	mappingStr, err := ioutil.ReadFile(fileName)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return m.InitFromYAMLString(string(mappingStr))
+	h := sha256.New()
+	h.Write(mappingStr)
+	newSha := string(h.Sum(nil))
+
+	if newSha != m.sha {
+		err = m.InitFromYAMLString(string(mappingStr), useCache)
+		if err != nil {
+			return false, err
+		}
+		m.sha = newSha
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (m *MetricMapper) GetMapping(statsdMetric string, statsdMetricType MetricType) (*MetricMapping, prometheus.Labels, bool) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	if m.useCache {
+		result, cached := m.cache.Get(statsdMetric)
+		if cached {
+			return result.Mapping, result.Labels, result.Matched
+		}
+	}
 	// glob matching
 	if m.doFSM {
 		finalState, captures := m.FSM.GetMapping(statsdMetric, string(statsdMetricType))
@@ -230,17 +256,22 @@ func (m *MetricMapper) GetMapping(statsdMetric string, statsdMetricType MetricTy
 			for index, formatter := range result.labelFormatters {
 				labels[result.labelKeys[index]] = formatter.Format(captures)
 			}
+
+			if m.useCache {
+				m.cache.AddMatch(statsdMetric, result, labels)
+			}
+
 			return result, labels, true
 		} else if !m.doRegex {
 			// if there's no regex match type, return immediately
+			if m.useCache {
+				m.cache.AddMiss(statsdMetric)
+			}
 			return nil, nil, false
 		}
 	}
 
 	// regex matching
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	for _, mapping := range m.Mappings {
 		// if a rule don't have regex matching type, the regex field is unset
 		if mapping.regex == nil {
@@ -268,8 +299,14 @@ func (m *MetricMapper) GetMapping(statsdMetric string, statsdMetricType MetricTy
 			labels[label] = string(value)
 		}
 
+		if m.useCache {
+			m.cache.AddMatch(statsdMetric, &mapping, labels)
+		}
+
 		return &mapping, labels, true
 	}
-
+	if m.useCache {
+		m.cache.AddMiss(statsdMetric)
+	}
 	return nil, nil, false
 }
