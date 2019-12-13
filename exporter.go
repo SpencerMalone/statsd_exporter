@@ -606,29 +606,25 @@ func NewExporter(mapper *mapper.MetricMapper) *Exporter {
 }
 
 func buildEvent(statType, metric string, value float64, relative bool, labels map[string]string) (Event, error) {
-	labelsCopy := make(map[string]string)
-	for key, value := range labels {
-		labelsCopy[key] = value
-	}
 	switch statType {
 	case "c":
 		return &CounterEvent{
 			metricName: metric,
 			value:      float64(value),
-			labels:     labelsCopy,
+			labels:     labels,
 		}, nil
 	case "g":
 		return &GaugeEvent{
 			metricName: metric,
 			value:      float64(value),
 			relative:   relative,
-			labels:     labelsCopy,
+			labels:     labels,
 		}, nil
 	case "ms", "h":
 		return &TimerEvent{
 			metricName: metric,
 			value:      float64(value),
-			labels:     labelsCopy,
+			labels:     labels,
 		}, nil
 	case "s":
 		return nil, fmt.Errorf("no support for StatsD sets")
